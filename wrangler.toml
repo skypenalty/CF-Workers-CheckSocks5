@@ -1,5 +1,5 @@
 name = "cf-workers-check-socks5"
-main = "./_worker.js"
+main = "./auth-wrapper.js"
 compatibility_date = "2026-05-01"
 workers_dev = true
 
@@ -11,3 +11,8 @@ workers_dev = true
 # Optional: override the footer HTML exposed as env.BEIAN in the Worker
 # [vars]
 # BEIAN = "Example footer HTML"
+
+# Authentication is handled by auth-wrapper.js.
+# Configure AUTH_USER and AUTH_PASS as Cloudflare Worker secrets/variables.
+# If upstream later adds native authentication, set AUTH_BYPASS=true to disable
+# this wrapper without changing the repository, then migrate to upstream auth.
