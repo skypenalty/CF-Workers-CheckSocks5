@@ -2923,6 +2923,19 @@ function generateHTML(备案内容) {
 			color: #fff4cf;
 		}
 
+		.export-chip:disabled,
+		.export-chip.is-disabled,
+		.export-chip:disabled:hover,
+		.export-chip.is-disabled:hover {
+			border-color: rgba(144, 180, 212, 0.1);
+			background: rgba(255, 255, 255, 0.025);
+			color: rgba(142, 166, 188, 0.46);
+			box-shadow: none;
+			cursor: not-allowed;
+			opacity: 0.72;
+			pointer-events: none;
+		}
+
 		.filter-chip:disabled,
 		.filter-chip.is-disabled {
 			border-color: rgba(144, 180, 212, 0.1);
@@ -3993,6 +4006,16 @@ function generateHTML(备案内容) {
 			border-color: rgba(245, 158, 11, 0.34);
 			background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(251, 191, 36, 0.16));
 			color: #7c4a03;
+		}
+
+		html[data-theme='light'] .export-chip:disabled,
+		html[data-theme='light'] .export-chip.is-disabled,
+		html[data-theme='light'] .export-chip:disabled:hover,
+		html[data-theme='light'] .export-chip.is-disabled:hover {
+			border-color: rgba(95, 123, 150, 0.1);
+			background: rgba(255, 255, 255, 0.36);
+			color: rgba(91, 115, 139, 0.46);
+			box-shadow: none;
 		}
 
 		html[data-theme='light'] .filter-chip:disabled,
@@ -6201,6 +6224,24 @@ function generateHTML(备案内容) {
 			filterToggleText.innerText = getFilterToggleLabel(visibleCount);
 		}
 
+		function updateExportButtonState() {
+			if (!exportGroup) return;
+			const csvButton = exportGroup.querySelector('[data-export-format="csv"]');
+			if (!csvButton) return;
+
+			const shouldDisable = hasErrorExportRecord();
+			csvButton.classList.toggle('is-disabled', shouldDisable);
+			if (shouldDisable) {
+				csvButton.setAttribute('disabled', 'disabled');
+				csvButton.setAttribute('aria-disabled', 'true');
+				csvButton.setAttribute('title', '当前筛选包含失败结果，无法导出 CSV');
+			} else {
+				csvButton.removeAttribute('disabled');
+				csvButton.removeAttribute('aria-disabled');
+				csvButton.removeAttribute('title');
+			}
+		}
+
 		function updateResultFilters() {
 			if (!resultsFilters || !filterToggle || !filterPanel || !filterToggleText || !primaryFilterGroup || !protocolFilterGroup || !countryFilterGroup || !filterEmpty) return;
 
@@ -6210,6 +6251,7 @@ function generateHTML(备案内容) {
 				filterToggle.setAttribute('aria-expanded', 'false');
 				filterToggleText.innerText = '筛选：全部结果';
 				filterEmpty.hidden = true;
+				updateExportButtonState();
 				return;
 			}
 
@@ -6242,6 +6284,7 @@ function generateHTML(备案内容) {
 			const visibleCount = applyResultFilters();
 			updateFilterPanelState(visibleCount);
 			filterEmpty.hidden = visibleCount !== 0;
+			updateExportButtonState();
 		}
 
 		function getCurrentFilteredRecords() {
@@ -6254,7 +6297,14 @@ function generateHTML(备案内容) {
 
 		function getExportableRecords() {
 			return getCurrentFilteredRecords().filter(function (record) {
-				return record.status === 'success' && Boolean(record.data);
+				return (record.status === 'success' && Boolean(record.data))
+					|| record.status === 'error';
+			});
+		}
+
+		function hasErrorExportRecord() {
+			return getCurrentFilteredRecords().some(function (record) {
+				return record.status === 'error';
 			});
 		}
 
@@ -6353,9 +6403,42 @@ function generateHTML(备案内容) {
 			return riskText && riskText !== '未知' ? '[' + riskText + ']' : '';
 		}
 
-		function buildTextExportLine(data) {
-			const exportTarget = getTextExportTarget(data);
+		function getRecordErrorReason(record) {
+			const data = record?.data;
+			const networkReason = normalizeExportValue(data?.error)
+				|| normalizeExportValue(data?.message)
+				|| normalizeExportValue(record?.error);
+			if (networkReason) return networkReason;
+
+			if (record?.status === 'error' && !data) {
+				return '失败原因未知（无响应数据，可能为接口异常或网络中断）';
+			}
+
+			return '失败原因未知';
+		}
+
+		function sanitizeExportDescription(value) {
+			// 本函数体位于 generateHTML() 的模板字符串内（1 层字符串求值），
+			// 字符类里的回车/换行转义必须写成双反斜杠，字符串层消费一层后
+			// 浏览器才会收到等价的 CR/LF 字符类正则。
+			return normalizeExportValue(value).replace(/[\\r\\n]+/g, ' ');
+		}
+
+		function getRecordExportTarget(record) {
+			const dataTarget = getTextExportTarget(record?.data);
+			if (dataTarget) return dataTarget;
+			// 数据缺失（如 data 为 null 的接口异常/网络中断失败记录）时回退到记录自身的原始目标。
+			return normalizeExportValue(record?.target).split('#')[0].trim();
+		}
+
+		function buildTextExportLine(record) {
+			const data = record?.data;
+			const exportTarget = getRecordExportTarget(record);
 			if (!exportTarget) return '';
+
+			if (record?.status === 'error') {
+				return exportTarget + '#' + sanitizeExportDescription(getRecordErrorReason(record));
+			}
 
 			const exitData = getPreferredTextExportProbe(data)?.exit || {};
 			const country = normalizeExportValue(exitData.country);
@@ -6365,12 +6448,12 @@ function generateHTML(备案内容) {
 			const locationSegment = [country, city].filter(Boolean).join(' ') + buildTextExportTypeTag(exitData);
 			const networkSegment = [asn ? asn : '', asOrganization].filter(Boolean).join(' ') + buildTextExportRiskTag(exitData);
 			const description = [locationSegment, networkSegment].filter(Boolean).join(' ');
-			return exportTarget + (description ? '#' + description : '');
+			return exportTarget + (description ? '#' + sanitizeExportDescription(description) : '');
 		}
 
 		function buildTextExport(records) {
 			return records.map(function (record) {
-				return buildTextExportLine(record.data);
+				return buildTextExportLine(record);
 			}).filter(Boolean).join('\\n');
 		}
 
@@ -6502,12 +6585,17 @@ function generateHTML(备案内容) {
 		async function handleExport(format) {
 			const records = getExportableRecords();
 			if (!records.length) {
-				showExportToast('当前筛选没有可导出的有效结果', 'error');
+				showExportToast('当前筛选没有可导出的结果', 'error');
 				return;
 			}
 
 			try {
 				if (format === 'csv') {
+					if (hasErrorExportRecord()) {
+						showExportToast('当前筛选包含失败结果，无法导出 CSV', 'error');
+						return;
+					}
+
 					downloadTextFile('\\ufeff' + buildCsvExport(records), getExportFileName('csv'), 'text/csv');
 					showExportToast('已开始下载 CSV 文件');
 					return;
